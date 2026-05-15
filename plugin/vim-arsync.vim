@@ -1,7 +1,7 @@
 " Vim plugin to handle async rsync synchronisation between hosts
 " Title: vim-arsync
-" Author: Ken Hasselmann
-" Date: 08/2019
+" Author: Ēriks Jenkēvics
+" Date: 2019-2026
 " License: MIT
 
 if exists('g:loaded_vim_arsync')

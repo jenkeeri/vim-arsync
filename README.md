@@ -1,10 +1,5 @@
 # vim-arsync :octopus:
-Personal fork of `kenn7/vim-arsync`, maintained in `jenkeeri/vim-arsync`, for asynchronous rsync-based synchronization between local and remote project files.
-
-## Fork notes
-- Installation examples in this README use this fork: `jenkeeri/vim-arsync`.
-- This fork includes support for `ARsyncDownDelete`, `sleep_before_sync`, `local_options`, `remote_options`, and `remote_or_local` syncing modes.
-- Config parsing ignores blank lines and `#` comments in `.vim-arsync`.
+A Vim/Neovim plugin for asynchronous rsync-based synchronisation between a local machine and a remote host (or between two local paths). Install from `jenkeeri/vim-arsync`.
 - Multiple sync profiles, per-file/dir sync, post-sync remote command, Git status query, and statusline integration.
 
 ## Main features
@@ -215,8 +210,6 @@ Create `.vim-arsync.debug` and `.vim-arsync.release` in your project root with d
 ## Acknowledgements
 
 This plugin was inspired by [vim-hsftp](https://github.com/hesselbom/vim-hsftp) but vim-arsync offers more (rsync, ignore, async...).
-
-This plugin ships with the [async.vim](https://github.com/prabirshrestha/async.vim) library for async operation with vim and neovim.
 
 ## Similar projects
 

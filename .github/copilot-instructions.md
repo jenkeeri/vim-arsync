@@ -2,7 +2,7 @@
 
 ## Project Identity
 
-**Repo:** `jenkeeri/vim-arsync` — personal fork of `kenn7/vim-arsync`.  
+**Repo:** `jenkeeri/vim-arsync`  
 A Vim/Neovim plugin providing **asynchronous rsync-based synchronisation** between a local machine and a remote host (or two local paths).
 
 **Primary use-case:** Edit on MacBook (Neovim) → auto-sync to Linux host → build C++ remotely → optionally pull results back.
@@ -15,7 +15,7 @@ A Vim/Neovim plugin providing **asynchronous rsync-based synchronisation** betwe
 vim-arsync/
 ├── plugin/vim-arsync.vim   # Main plugin: config parsing, rsync command builder,
 │                           #   async job dispatch, autocmds, user commands
-├── autoload/arsync/job.vim # Bundled async job shim (prabirshrestha/async.vim)
+├── autoload/arsync/job.vim # Bundled async job shim
 │                           #   Abstracts nvimjob / vimjob differences
 ├── README.md
 ├── LICENSE
