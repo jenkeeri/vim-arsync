@@ -2,10 +2,10 @@
 
 ## Project Identity
 
-**Repo:** `jenkeeri/vim-arsync`  
+**Repo:** `jenkeeri/vim-arsync`
 A Vim/Neovim plugin providing **asynchronous rsync-based synchronisation** between a local machine and a remote host (or two local paths).
 
-**Primary use-case:** Edit on MacBook (Neovim) → auto-sync to Linux host → build C++ remotely → optionally pull results back.
+**Primary use-case:** Edit on Neovim → auto-sync to Linux host → build remotely.
 
 ---
 
@@ -39,8 +39,8 @@ vim-arsync/
 
 ### `autoload/arsync/job.vim`
 
-Thin shim over Neovim `jobstart` / Vim `job_start`.  
-API: `arsync#job#start(cmd, opts)` / `arsync#job#stop(jobid)`.  
+Thin shim over Neovim `jobstart` / Vim `job_start`.
+API: `arsync#job#start(cmd, opts)` / `arsync#job#stop(jobid)`.
 Do **not** call `jobstart`/`job_start` directly — always go through this shim.
 
 ---
@@ -96,13 +96,13 @@ Do **not** call `jobstart`/`job_start` directly — always go through this shim.
 
 ## Active Commands
 
-`:ARshowConf` · `:ARsyncUp` · `:ARsyncUpDelete` · `:ARsyncDown` · `:ARsyncDownDelete`  
+`:ARshowConf` · `:ARsyncUp` · `:ARsyncUpDelete` · `:ARsyncDown` · `:ARsyncDownDelete`
 `:ARsyncDryRun` · `:ARsyncFile` · `:ARsyncDir` · `:ARgitStatus` · `:ARsyncProfile <name>`
 
 ---
 
 ## Living Context
 
-`copilot-documentation.md` contains full session history, the improvement roadmap, and known issues/tech debt.  
-**Read it before making any non-trivial change.**  
+`copilot-documentation.md` contains full session history, the improvement roadmap, and known issues/tech debt.
+**Read it before making any non-trivial change.**
 **Update it after every meaningful session.**
