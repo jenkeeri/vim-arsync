@@ -1,14 +1,16 @@
 # vim-arsync :octopus:
-A Vim/Neovim plugin for asynchronous rsync-based synchronisation between a local machine and a remote host (or between two local paths). Install from `jenkeeri/vim-arsync`.
+A Vim/Neovim plugin for asynchronous rsync-based synchronisation between a local machine and a remote host over SSH. Install from `jenkeeri/vim-arsync`.
+- Mirrors a remote build environment locally for IDE features (LSP, clangd, etc.)
 - Multiple sync profiles, per-file/dir sync, post-sync remote command, Git status query, and statusline integration.
 
 ## Main features
-- sync up or down project folder using rsync (with compression options etc. -> -avzhe ssh)
+- sync up or down project folder using rsync over SSH
+- **automatic gitignore exclusion** — fetches the remote's `.gitignore` rules via `git ls-files` and caches them locally
 - ignore certain files or folders based on configuration file
 - asynchronous operation
 - project based configuration file
 - auto sync up on file save with optional debounce
-- works with ssh-keys (recommended) or plaintext password in config file
+- works with SSH keys
 - run a remote build command after every up-sync and see compiler errors in the quickfix list
 - dry-run preview before any destructive sync
 - query remote git log and status without touching `.git/`
@@ -20,7 +22,6 @@ A Vim/Neovim plugin for asynchronous rsync-based synchronisation between a local
 ### Dependencies
 - rsync
 - *vim8* or *neovim*
-- sshpass (optional: only needed when using plaintext password in config file)
 
 
 ### Using vim-plug
@@ -57,19 +58,18 @@ Create a ```.vim-arsync``` file on the root of your project that contains the fo
 remote_host     example.com
 remote_user     john
 remote_port     22
-remote_passwd   secret
 remote_path     ~/temp/
 local_path      /home/ken/temp/vuetest/
 include_path    ["src/**","package.json"]
 ignore_path     ["build/","test/"]
-ignore_dotfiles 1
 ignore_git      1
 auto_sync_up    0
 debounce_ms     500
-remote_or_local remote
 sleep_before_sync 0
+remote_options  -vazr
 post_sync_cmd   make -C ~/temp/build -j8
 warn_on_down    0
+no_gitignore    0
 ```
 
 Required fields are:
@@ -78,27 +78,40 @@ Required fields are:
 
 Optional fields are:
 - ```remote_user```     username to connect with
-- ```remote_passwd```   password to connect with (requires sshpass) (not needed with SSH keys)
 - ```remote_port```     remote SSH port (default: 22)
 - ```local_path```      local folder to be synced (defaults to the directory containing `.vim-arsync`)
 - ```ignore_path```     list of ignored files/folders e.g. `["build/","test/"]`
 - ```include_path```    list of included files/folders e.g. `["src/**","package.json"]` (passed as `--include`)
-- ```ignore_dotfiles``` set to 1 to exclude dotfiles (e.g. `.vim-arsync` itself)
-- ```ignore_git```      set to 1 to exclude `.git/` — prevents the remote's Git history from overwriting the local repo (more surgical than `ignore_dotfiles`, which also hides `.clang-format`, `.clangd`, etc.)
+- ```ignore_git```      set to 1 to exclude `.git/` — prevents the remote's Git history from overwriting the local repo
 - ```auto_sync_up```    set to 1 to automatically upload on every file save
 - ```debounce_ms```     when `auto_sync_up` is enabled, coalesce rapid saves — the timer resets on each write and rsync only fires once the editing burst ends (e.g. `500` for 500 ms); takes precedence over `sleep_before_sync`
-- ```remote_or_local``` set to `local` to sync between two local filesystem paths instead of over SSH
 - ```sleep_before_sync``` delay in seconds before syncing — must be a positive integer (e.g. to wait for a build to finish); `0` or unset means sync immediately
-- ```local_options```   overrides the default rsync flags used when `remote_or_local` is `local` (default: `-var`)
-- ```remote_options```  overrides the default rsync flags used when `remote_or_local` is `remote` (default: `-vazr`; do **not** include `-e` as it is added automatically). To pass custom SSH options (e.g. identity file, ciphers), configure the host in `~/.ssh/config` instead.
+- ```remote_options```  overrides the default rsync flags (default: `-vazr`; do **not** include `-e` as it is added automatically). To pass custom SSH options (e.g. identity file, ciphers), configure the host in `~/.ssh/config` instead.
 - ```post_sync_cmd```   shell command run on the **remote host** via SSH after every successful up-sync. Output is piped into the quickfix list so compiler errors are immediately navigable. Example: `make -C ~/project/build -j8` or `ninja -C build/`. Only applies to remote mode.
 - ```warn_on_down```    set to 1 to require interactive confirmation before any down-sync (`ARsyncDown` / `ARsyncDownDelete`)
+- ```no_gitignore```    set to 1 to disable automatic gitignore-based exclusion (see below)
+
+**Auto-managed fields** (do not edit manually):
+- ```_cached_git_excludes``` JSON array of patterns fetched from the remote's `.gitignore` via `:ARsyncRefreshIgnore`
 
 **Notes:**
 - Lines starting with `#` are treated as comments and ignored.
 - Blank lines are ignored.
-- For remote syncing, `-e 'ssh -p PORT'` is always added automatically — do not include `-e` in `remote_options`.
-- `ignore_git` and `ignore_dotfiles` can be combined: `ignore_git 1` protects `.git/` while still allowing `.clang-format`, `.clangd`, etc. to sync.
+- `-e 'ssh -p PORT'` is always added automatically — do not include `-e` in `remote_options`.
+
+## Gitignore-based exclusion
+
+By default, the plugin will warn you on first sync if no cached gitignore excludes exist. Run:
+
+```vim
+:ARsyncRefreshIgnore
+```
+
+This SSHs to the remote, runs `git ls-files --others --ignored --exclude-standard --directory`, and caches the result as `_cached_git_excludes` in your `.vim-arsync` file. On subsequent syncs, these patterns are automatically applied as `--exclude` flags to rsync.
+
+**When to refresh:** Run `:ARsyncRefreshIgnore` after modifying `.gitignore` on the remote or after switching branches.
+
+**Opting out:** Set `no_gitignore 1` in `.vim-arsync` to disable this feature entirely.
 
 ## Usage
 If ```auto_sync_up``` is set to 1, the plugin will automatically run `:ARsyncUp` every time a
@@ -119,6 +132,7 @@ tools like auto-save plugins or when running `:bufdo`.
 - ```:ARsyncFile``` uploads only the file in the current buffer
 - ```:ARsyncDir``` uploads only the directory containing the current buffer
 - ```:ARgitStatus``` SSHs to the remote and shows `git log --oneline -5` and `git status --short` in the quickfix window — no files are transferred
+- ```:ARsyncRefreshIgnore``` fetches the list of git-ignored files/dirs from the remote and caches it in `.vim-arsync`
 - ```:ARsyncProfile <name>``` switches the active profile (reads `.vim-arsync.<name>` instead of `.vim-arsync`); pass an empty string to revert to the default
 
 Commands can be mapped to keyboard shortcuts to enhance operations:
@@ -130,6 +144,7 @@ nnoremap <leader>sD :ARsyncDownDelete<CR>
 nnoremap <leader>sf :ARsyncFile<CR>
 nnoremap <leader>sr :ARsyncDryRun<CR>
 nnoremap <leader>sg :ARgitStatus<CR>
+nnoremap <leader>si :ARsyncRefreshIgnore<CR>
 ```
 
 ### Statusline integration

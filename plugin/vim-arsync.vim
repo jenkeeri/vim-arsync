@@ -19,6 +19,7 @@ let s:arsync_is_dry_run          = 0   " 1 when the current job is a dry-run
 let s:arsync_direction_label     = ''  " direction symbol for g:arsync_status_detail
 let s:arsync_target_label        = ''  " target (host/file/dir) for g:arsync_status_detail
 let s:arsync_status_reset_timer  = -1  " timer id for auto-reset of ok/error status
+let s:git_excludes_output        = []  " accumulator for :ARsyncRefreshIgnore SSH output
 
 " Public variables for statusline / notification integration.
 " g:arsync_status        — '' (idle), 'syncing', 'ok', 'error'
@@ -119,6 +120,7 @@ function! LoadConf() abort
             let l:var_name  = l:trimmed[0:l:sep-1]
             let l:raw_value = substitute(l:trimmed[l:sep+1:], '^\s*\(.\{-}\)\s*$', '\1', '')
             if l:var_name ==# 'ignore_path' || l:var_name ==# 'include_path'
+                        \ || l:var_name ==# '_cached_git_excludes'
                 let l:var_value = s:ParseList(l:raw_value)
             else
                 let l:var_value = escape(l:raw_value, '%#!')
@@ -132,12 +134,6 @@ function! LoadConf() abort
     if !has_key(l:conf_dict, 'remote_port')
         let l:conf_dict['remote_port'] = 22
     endif
-    if !has_key(l:conf_dict, 'remote_or_local')
-        let l:conf_dict['remote_or_local'] = 'remote'
-    endif
-    if !has_key(l:conf_dict, 'local_options')
-        let l:conf_dict['local_options'] = '-var'
-    endif
     if !has_key(l:conf_dict, 'remote_options')
         let l:conf_dict['remote_options'] = '-vazr'
     endif
@@ -145,43 +141,26 @@ function! LoadConf() abort
 endfunction
 
 " Build and return the rsync command list for the given direction using conf_dict.
-" Applies all filter flags (include_path, ignore_path, ignore_dotfiles, ignore_git, sshpass).
-" Returns [] for unknown direction/mode combinations.
+" Applies all filter flags (include_path, ignore_path, ignore_git, _cached_git_excludes).
+" Returns [] for unknown direction combinations.
 function! s:BuildRsyncCmd(direction, conf_dict) abort
     let l:remote_opts = split(a:conf_dict['remote_options'])
-    let l:local_opts  = split(a:conf_dict['local_options'])
     let l:ssh_cmd     = 'ssh -p ' . a:conf_dict['remote_port']
     let l:user_passwd = has_key(a:conf_dict, 'remote_user')
                 \ ? a:conf_dict['remote_user'] . '@' : ''
-    let l:remote = has_key(a:conf_dict, 'remote_host')
-                \ ? l:user_passwd . a:conf_dict['remote_host'] . ':' . a:conf_dict['remote_path']
-                \ : ''
+    let l:remote = l:user_passwd . a:conf_dict['remote_host'] . ':' . a:conf_dict['remote_path']
 
     let l:cmd = []
-    if a:conf_dict['remote_or_local'] ==# 'remote'
-        if a:direction ==# 'down'
-            let l:cmd = ['rsync', '--prune-empty-dirs'] + l:remote_opts + ['-e', l:ssh_cmd, l:remote . '/', a:conf_dict['local_path'] . '/']
-        elseif a:direction ==# 'up'
-            let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
-        elseif a:direction ==# 'upDelete'
-            let l:cmd = ['rsync', '--delete'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
-        elseif a:direction ==# 'downDelete'
-            let l:cmd = ['rsync', '--delete', '--prune-empty-dirs'] + l:remote_opts + ['-e', l:ssh_cmd, l:remote . '/', a:conf_dict['local_path'] . '/']
-        elseif a:direction ==# 'dryRun'
-            let l:cmd = ['rsync', '--dry-run', '--itemize-changes'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
-        endif
-    elseif a:conf_dict['remote_or_local'] ==# 'local'
-        if a:direction ==# 'down'
-            let l:cmd = ['rsync'] + l:local_opts + [a:conf_dict['remote_path'], a:conf_dict['local_path']]
-        elseif a:direction ==# 'up'
-            let l:cmd = ['rsync'] + l:local_opts + [a:conf_dict['local_path'], a:conf_dict['remote_path']]
-        elseif a:direction ==# 'upDelete'
-            let l:cmd = ['rsync', '--delete'] + l:local_opts + [a:conf_dict['local_path'], a:conf_dict['remote_path'] . '/']
-        elseif a:direction ==# 'downDelete'
-            let l:cmd = ['rsync', '--delete'] + l:local_opts + [a:conf_dict['remote_path'], a:conf_dict['local_path'] . '/']
-        elseif a:direction ==# 'dryRun'
-            let l:cmd = ['rsync', '--dry-run', '--itemize-changes'] + l:local_opts + [a:conf_dict['local_path'], a:conf_dict['remote_path']]
-        endif
+    if a:direction ==# 'down'
+        let l:cmd = ['rsync', '--prune-empty-dirs'] + l:remote_opts + ['-e', l:ssh_cmd, l:remote . '/', a:conf_dict['local_path'] . '/']
+    elseif a:direction ==# 'up'
+        let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
+    elseif a:direction ==# 'upDelete'
+        let l:cmd = ['rsync', '--delete'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
+    elseif a:direction ==# 'downDelete'
+        let l:cmd = ['rsync', '--delete', '--prune-empty-dirs'] + l:remote_opts + ['-e', l:ssh_cmd, l:remote . '/', a:conf_dict['local_path'] . '/']
+    elseif a:direction ==# 'dryRun'
+        let l:cmd = ['rsync', '--dry-run', '--itemize-changes'] + l:remote_opts + ['-e', l:ssh_cmd, a:conf_dict['local_path'] . '/', l:remote . '/']
     endif
 
     if empty(l:cmd)
@@ -198,16 +177,15 @@ function! s:BuildRsyncCmd(direction, conf_dict) abort
             let l:cmd += ['--exclude', l:file]
         endfor
     endif
-    if has_key(a:conf_dict, 'ignore_dotfiles') && a:conf_dict['ignore_dotfiles'] == 1
-        let l:cmd += ['--exclude', '.*']
-    endif
     " ignore_git excludes .git/ without touching other dotfiles like .clang-format
     if has_key(a:conf_dict, 'ignore_git') && a:conf_dict['ignore_git'] == 1
         let l:cmd += ['--exclude', '.git/']
     endif
-
-    if has_key(a:conf_dict, 'remote_passwd')
-        let l:cmd = ['sshpass', '-p', a:conf_dict['remote_passwd']] + l:cmd
+    " Apply cached gitignore exclusions from remote
+    if has_key(a:conf_dict, '_cached_git_excludes')
+        for l:pattern in a:conf_dict['_cached_git_excludes']
+            let l:cmd += ['--exclude', l:pattern]
+        endfor
     endif
 
     return l:cmd
@@ -289,7 +267,7 @@ function! ShowConf() abort
     for l:item in sort(items(l:conf_dict))
         echo printf('  %-22s = %s', l:item[0], string(l:item[1]))
     endfor
-    if has_key(l:conf_dict, 'remote_host') || l:conf_dict['remote_or_local'] ==# 'local'
+    if has_key(l:conf_dict, 'remote_host')
         echo ''
         echo '=== Resolved rsync command (up) ==='
         let l:cmd = s:BuildRsyncCmd('up', l:conf_dict)
@@ -300,7 +278,7 @@ endfunction
 " Main sync entry point. direction: 'up', 'down', 'upDelete', 'downDelete', 'dryRun'.
 function! ARsync(direction) abort
     let l:conf_dict = LoadConf()
-    if l:conf_dict['remote_or_local'] ==# 'remote' && !has_key(l:conf_dict, 'remote_host')
+    if !has_key(l:conf_dict, 'remote_host')
         if empty(findfile('.vim-arsync', '.;'))
             echoerr 'vim-arsync: No .vim-arsync config file found. Aborting...'
         else
@@ -311,11 +289,6 @@ function! ARsync(direction) abort
 
     if s:arsync_running
         echo 'vim-arsync: sync already in progress, skipping.'
-        return
-    endif
-
-    if has_key(l:conf_dict, 'remote_passwd') && !executable('sshpass')
-        echoerr 'vim-arsync: sshpass is required for plain-text password auth. Install sshpass or use SSH key auth.'
         return
     endif
 
@@ -330,16 +303,21 @@ function! ARsync(direction) abort
         endif
     endif
 
+    " Auto-fetch gitignore exclusions on first sync if not cached and not opted out
+    if !has_key(l:conf_dict, '_cached_git_excludes')
+                \ && !(has_key(l:conf_dict, 'no_gitignore') && l:conf_dict['no_gitignore'] == 1)
+        echo 'vim-arsync: No cached gitignore excludes. Run :ARsyncRefreshIgnore to fetch from remote.'
+    endif
+
     let l:cmd = s:BuildRsyncCmd(a:direction, l:conf_dict)
     if empty(l:cmd)
         echoerr 'vim-arsync: Unknown sync direction or mode: ' . a:direction
         return
     endif
 
-    " Prepare post-sync SSH command (up-syncs in remote mode only, not dry-runs)
+    " Prepare post-sync SSH command (up-syncs only, not dry-runs)
     let s:arsync_post_job_cmd = []
     if (a:direction ==# 'up' || a:direction ==# 'upDelete')
-                \ && l:conf_dict['remote_or_local'] ==# 'remote'
                 \ && has_key(l:conf_dict, 'post_sync_cmd')
                 \ && !empty(l:conf_dict['post_sync_cmd'])
         let l:user_at_host = (has_key(l:conf_dict, 'remote_user')
@@ -351,12 +329,8 @@ function! ARsync(direction) abort
     let s:arsync_is_dry_run = (a:direction ==# 'dryRun')
     let l:dir_symbols = {'up': '↑', 'down': '↓', 'upDelete': '↑!', 'downDelete': '↓!', 'dryRun': '~'}
     let s:arsync_direction_label = get(l:dir_symbols, a:direction, a:direction)
-    if l:conf_dict['remote_or_local'] ==# 'remote' && has_key(l:conf_dict, 'remote_host')
-        let s:arsync_target_label = ' ' . (has_key(l:conf_dict, 'remote_user')
-                    \ ? l:conf_dict['remote_user'] . '@' : '') . l:conf_dict['remote_host']
-    else
-        let s:arsync_target_label = ''
-    endif
+    let s:arsync_target_label = ' ' . (has_key(l:conf_dict, 'remote_user')
+                \ ? l:conf_dict['remote_user'] . '@' : '') . l:conf_dict['remote_host']
     let l:title = s:arsync_is_dry_run ? 'vim-arsync [dry-run]' : 'vim-arsync'
     call setqflist([], ' ', {'title' : l:title})
     let s:arsync_qfid = getqflist({'id' : 0}).id
@@ -405,10 +379,85 @@ function! ARgitStatus() abort
                 \ })
 endfunction
 
+" ---------- Gitignore exclusion ----------
+
+" Writes the given excludes list as _cached_git_excludes into the .vim-arsync config file.
+" Preserves all other lines; replaces existing _cached_git_excludes or appends.
+function! s:WriteGitExcludesToConfig(excludes) abort
+    let l:suffix = exists('g:arsync_profile') && !empty(g:arsync_profile)
+                \ ? '.' . g:arsync_profile : ''
+    let l:config_file = findfile('.vim-arsync' . l:suffix, '.;')
+    if empty(l:config_file) && !empty(l:suffix)
+        let l:config_file = findfile('.vim-arsync', '.;')
+    endif
+    if empty(l:config_file)
+        echoerr 'vim-arsync: Cannot find .vim-arsync config file to write excludes.'
+        return
+    endif
+
+    let l:lines = readfile(l:config_file)
+    let l:new_line = '_cached_git_excludes ' . json_encode(a:excludes)
+    let l:found = 0
+    let l:idx = 0
+    for l:line in l:lines
+        if l:line =~# '^\s*_cached_git_excludes\s'
+            let l:lines[l:idx] = l:new_line
+            let l:found = 1
+            break
+        endif
+        let l:idx += 1
+    endfor
+    if !l:found
+        call add(l:lines, l:new_line)
+    endif
+    call writefile(l:lines, l:config_file)
+endfunction
+
+" Handler for the git ls-files SSH job used by :ARsyncRefreshIgnore.
+function! s:RefreshIgnoreHandler(job_id, data, event_type) abort
+    if a:event_type ==# 'stdout'
+        let s:git_excludes_output += a:data
+    elseif a:event_type ==# 'exit'
+        if a:data != 0
+            echoerr 'vim-arsync: Failed to fetch git excludes from remote (exit ' . a:data . ').'
+            return
+        endif
+        " Filter empty lines and trailing newline artifacts
+        let l:excludes = filter(copy(s:git_excludes_output), '!empty(v:val)')
+        call s:WriteGitExcludesToConfig(l:excludes)
+        echo 'vim-arsync: Cached ' . len(l:excludes) . ' gitignore exclusion patterns.'
+    endif
+endfunction
+
+" Fetch the list of git-ignored files/dirs from the remote and cache in .vim-arsync.
+function! ARsyncRefreshIgnore() abort
+    let l:conf_dict = LoadConf()
+    if !has_key(l:conf_dict, 'remote_host')
+        echoerr 'vim-arsync: remote_host not configured. Aborting...'
+        return
+    endif
+
+    let l:user_at_host = (has_key(l:conf_dict, 'remote_user')
+                \ ? l:conf_dict['remote_user'] . '@' : '') . l:conf_dict['remote_host']
+    let l:remote_path = l:conf_dict['remote_path']
+    let l:remote_shell_cmd = 'git -C ' . shellescape(l:remote_path)
+                \ . ' ls-files --others --ignored --exclude-standard --directory'
+    let l:ssh_cmd = ['ssh', '-p', string(l:conf_dict['remote_port']),
+                \ l:user_at_host, l:remote_shell_cmd]
+
+    let s:git_excludes_output = []
+    echo 'vim-arsync: Fetching gitignore patterns from remote...'
+    call arsync#job#start(l:ssh_cmd, {
+                \ 'on_stdout': function('s:RefreshIgnoreHandler'),
+                \ 'on_stderr': function('s:RefreshIgnoreHandler'),
+                \ 'on_exit':   function('s:RefreshIgnoreHandler'),
+                \ })
+endfunction
+
 " Sync only the file currently open in the active buffer.
 function! ARsyncFile() abort
     let l:conf_dict = LoadConf()
-    if l:conf_dict['remote_or_local'] ==# 'remote' && !has_key(l:conf_dict, 'remote_host')
+    if !has_key(l:conf_dict, 'remote_host')
         if empty(findfile('.vim-arsync', '.;'))
             echoerr 'vim-arsync: No .vim-arsync config file found. Aborting...'
         else
@@ -444,16 +493,8 @@ function! ARsyncFile() abort
     let l:user_passwd = has_key(l:conf_dict, 'remote_user')
                 \ ? l:conf_dict['remote_user'] . '@' : ''
 
-    if l:conf_dict['remote_or_local'] ==# 'remote'
-        let l:dest = l:user_passwd . l:conf_dict['remote_host'] . ':' . l:remote_dir . '/'
-        let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, l:buf_path, l:dest]
-    else
-        let l:cmd = ['rsync'] + split(l:conf_dict['local_options']) + [l:buf_path, l:remote_dir . '/']
-    endif
-
-    if has_key(l:conf_dict, 'remote_passwd')
-        let l:cmd = ['sshpass', '-p', l:conf_dict['remote_passwd']] + l:cmd
-    endif
+    let l:dest = l:user_passwd . l:conf_dict['remote_host'] . ':' . l:remote_dir . '/'
+    let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, l:buf_path, l:dest]
 
     let s:arsync_post_job_cmd    = []
     let s:arsync_is_dry_run      = 0
@@ -473,7 +514,7 @@ endfunction
 " Sync only the directory containing the file open in the active buffer.
 function! ARsyncDir() abort
     let l:conf_dict = LoadConf()
-    if l:conf_dict['remote_or_local'] ==# 'remote' && !has_key(l:conf_dict, 'remote_host')
+    if !has_key(l:conf_dict, 'remote_host')
         if empty(findfile('.vim-arsync', '.;'))
             echoerr 'vim-arsync: No .vim-arsync config file found. Aborting...'
         else
@@ -508,16 +549,8 @@ function! ARsyncDir() abort
     let l:user_passwd = has_key(l:conf_dict, 'remote_user')
                 \ ? l:conf_dict['remote_user'] . '@' : ''
 
-    if l:conf_dict['remote_or_local'] ==# 'remote'
-        let l:dest = l:user_passwd . l:conf_dict['remote_host'] . ':' . l:remote_dir . '/'
-        let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, l:buf_dir . '/', l:dest]
-    else
-        let l:cmd = ['rsync'] + split(l:conf_dict['local_options']) + [l:buf_dir . '/', l:remote_dir . '/']
-    endif
-
-    if has_key(l:conf_dict, 'remote_passwd')
-        let l:cmd = ['sshpass', '-p', l:conf_dict['remote_passwd']] + l:cmd
-    endif
+    let l:dest = l:user_passwd . l:conf_dict['remote_host'] . ':' . l:remote_dir . '/'
+    let l:cmd = ['rsync'] + l:remote_opts + ['-e', l:ssh_cmd, l:buf_dir . '/', l:dest]
 
     let s:arsync_post_job_cmd    = []
     let s:arsync_is_dry_run      = 0
@@ -603,6 +636,7 @@ command! ARsyncFile        call ARsyncFile()
 command! ARsyncDir         call ARsyncDir()
 command! ARgitStatus       call ARgitStatus()
 command! ARshowConf        call ShowConf()
+command! ARsyncRefreshIgnore call ARsyncRefreshIgnore()
 command! -nargs=1 ARsyncProfile call ARsyncProfile(<q-args>)
 
 augroup vimarsync
